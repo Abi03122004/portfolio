@@ -56,6 +56,22 @@
             'Docker', 'Linux', 'Blockchain APIs'
         ];
 
+        // CENTRAL WEBHOOK (Google Apps Script Web App URL)
+        // Replace the string below with your deployed Apps Script Web App URL
+        // Example: 'https://script.google.com/macros/s/AKfycbx.../exec'
+        const WEBHOOK_URL = 'https://script.google.com/macros/s/REPLACE_WITH_YOUR_WEB_APP_URL/exec';
+        const ENABLE_CENTRAL_SAVE = true; // set to false to disable posting to webhook
+
+        // ADMIN SETTINGS (client-side admin check)
+        // Replace the hash below with SHA-256 hex of your chosen admin password.
+        // To generate the hash in a browser console: 
+        //   await (async s=>{const e=new TextEncoder();const d=await crypto.subtle.digest('SHA-256',e.encode(s));return Array.from(new Uint8Array(d)).map(b=>b.toString(16).padStart(2,'0')).join('')})('your-password')
+        const ADMIN_PASSWORD_HASH = 'REPLACE_WITH_SHA256_HASH';
+        // ADMIN SECRET used to fetch central messages (must match Apps Script secret)
+        // Replace with a random string and keep it private. This value will be sent
+        // from the admin client to the Apps Script GET endpoint for authorization.
+        const ADMIN_SECRET = 'REPLACE_WITH_ADMIN_SECRET';
+
         function renderPortfolio() {
             const root = document.getElementById('root');
             
@@ -204,34 +220,80 @@
                                 <div class="flex gap-3">
                                     <button type="submit" class="px-6 py-2 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 transition">Send Message</button>
                                     <button type="button" onclick="copyEmail()" class="px-6 py-2 rounded-lg border border-gray-300 font-medium hover:bg-gray-50 transition">Copy Email</button>
-                                    <button type="button" onclick="viewMessages()" class="px-6 py-2 rounded-lg border border-green-300 bg-green-50 text-green-700 font-medium hover:bg-green-100 transition">View Messages</button>
+                                    <button id="admin-login-btn" type="button" onclick="adminLogin()" class="px-6 py-2 rounded-lg border border-yellow-300 bg-yellow-50 text-yellow-800 font-medium hover:bg-yellow-100 transition">Admin Login</button>
+                                    <button id="view-messages-btn" type="button" onclick="viewMessages()" class="px-6 py-2 rounded-lg border border-green-300 bg-green-50 text-green-700 font-medium hover:bg-green-100 transition" style="display:none;">View Messages</button>
+                                    <button id="admin-logout-btn" type="button" onclick="adminLogout()" class="px-6 py-2 rounded-lg border border-red-300 bg-red-50 text-red-700 font-medium hover:bg-red-100 transition" style="display:none;">Admin Logout</button>
                                 </div>
 
                             </form>
-
-                            <div class="mt-8 p-4 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-800">
-                                <p><strong>💡 Email Setup Required (New EmailJS):</strong></p>
-                                <ol class="mt-2 space-y-1 list-decimal list-inside">
-                                    <li>Go to <a href="https://www.emailjs.com" target="_blank" class="underline text-yellow-700">emailjs.com</a> → Sign up (free)</li>
-                                    <li>Click your profile → <strong>Account</strong></li>
-                                    <li>Copy your <strong>PUBLIC KEY</strong> (looks like: <code>pk_xxxxxxxx...</code>)</li>
-                                    <li>Ensure Email Service (Gmail) is connected and template named <code>template_portfolio</code> exists</li>
-                                    <li>See <code>QUICK_EMAILJS_SETUP.md</code> for step-by-step instructions</li>
-                                </ol>
-                                <p class="mt-3 text-xs text-yellow-700">You'll receive email notifications in Gmail after completing these steps.</p>
-                            </div>
 
                         <!-- Footer -->
                         <footer class="text-center text-sm text-gray-500 p-6 border-t">Made with 💙 • Abinesh • Data Analytical Engineer • 2025</footer>
                     </main>
                 </div>
             `;
+
+            // Update admin button visibility right after render
+            try {
+                const viewBtn = document.getElementById('view-messages-btn');
+                const logoutBtn = document.getElementById('admin-logout-btn');
+                const loginBtn = document.getElementById('admin-login-btn');
+                if (isAdmin()) {
+                    if (viewBtn) viewBtn.style.display = '';
+                    if (logoutBtn) logoutBtn.style.display = '';
+                    if (loginBtn) loginBtn.style.display = 'none';
+                } else {
+                    if (viewBtn) viewBtn.style.display = 'none';
+                    if (logoutBtn) logoutBtn.style.display = 'none';
+                    if (loginBtn) loginBtn.style.display = '';
+                }
+            } catch (e) {
+                // ignore
+            }
         }
 
         function copyEmail() {
             navigator.clipboard.writeText('abinesharjunan850@gmail.com').then(() => {
                 alert('Email copied to clipboard!');
             });
+        }
+
+        // Utility: SHA-256 hash helper
+        async function hashString(str) {
+            const enc = new TextEncoder();
+            const data = enc.encode(str);
+            const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        function isAdmin() {
+            return sessionStorage.getItem('portfolioAdmin') === 'true';
+        }
+
+        async function adminLogin() {
+            try {
+                const pwd = prompt('Enter admin password to view messages:');
+                if (!pwd) return;
+                const h = await hashString(pwd);
+                if (h === ADMIN_PASSWORD_HASH) {
+                    sessionStorage.setItem('portfolioAdmin', 'true');
+                    alert('Admin mode enabled. You can now view messages.');
+                    // Re-render to update button visibility
+                    renderPortfolio();
+                } else {
+                    alert('Incorrect password.');
+                }
+            } catch (err) {
+                console.error('Admin login error:', err);
+                alert('Unable to perform admin login in this browser.');
+            }
+        }
+
+        function adminLogout() {
+            sessionStorage.removeItem('portfolioAdmin');
+            alert('Admin logged out.');
+            renderPortfolio();
         }
 
         function downloadResume() {
@@ -416,6 +478,37 @@ Portfolio: http://localhost:8000
                     console.log('Email setup needed - message saved locally');
                 }
             }, 100);
+
+            // Send to central webhook (Google Sheets or other) - non-blocking
+            (function sendToCentral() {
+                if (!ENABLE_CENTRAL_SAVE) {
+                    console.log('Central save disabled by configuration.');
+                    return;
+                }
+                if (!WEBHOOK_URL || WEBHOOK_URL.includes('REPLACE_WITH_YOUR_WEB_APP_URL')) {
+                    console.log('Central webhook not configured; skipping central save.');
+                    return;
+                }
+
+                try {
+                    fetch(WEBHOOK_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            name: name,
+                            email: email,
+                            message: message,
+                            timestamp: new Date().toISOString()
+                        })
+                    }).then(response => {
+                        console.log('Central store response status:', response.status);
+                    }).catch(err => {
+                        console.warn('Central store save failed:', err);
+                    });
+                } catch (err) {
+                    console.warn('Central save error:', err);
+                }
+            })();
         }
 
         function showAllMessages() {
@@ -424,7 +517,27 @@ Portfolio: http://localhost:8000
             console.table(messages);
         }
 
-        function viewMessages() {
+        // If admin: fetch central messages and show admin panel. Otherwise show local messages.
+        async function viewMessages() {
+            if (isAdmin()) {
+                // Try fetch from central store
+                try {
+                    const msgs = await fetchCentralMessages();
+                    if (!msgs || msgs.length === 0) {
+                        alert('No messages in central store.');
+                        return;
+                    }
+                    openAdminPanel(msgs);
+                } catch (err) {
+                    console.warn('Failed to fetch central messages, falling back to local messages:', err);
+                    showLocalMessages();
+                }
+            } else {
+                showLocalMessages();
+            }
+        }
+
+        function showLocalMessages() {
             const messages = JSON.parse(localStorage.getItem('portfolioMessages') || '[]');
             if (messages.length === 0) {
                 alert('No messages yet!\n\nSend a test message to see it appear here.');
@@ -445,12 +558,129 @@ Portfolio: http://localhost:8000
             alert(messageText);
         }
 
+        // Fetch messages from central Apps Script endpoint (GET)
+        async function fetchCentralMessages() {
+            if (!ENABLE_CENTRAL_SAVE) throw new Error('Central save disabled');
+            if (!WEBHOOK_URL || WEBHOOK_URL.includes('REPLACE_WITH_YOUR_WEB_APP_URL')) throw new Error('Webhook not configured');
+            if (!ADMIN_SECRET || ADMIN_SECRET.includes('REPLACE_WITH_ADMIN_SECRET')) throw new Error('Admin secret not configured');
+
+            // call GET endpoint with action=list and secret
+            const url = `${WEBHOOK_URL}?action=list&secret=${encodeURIComponent(ADMIN_SECRET)}`;
+            const res = await fetch(url, { method: 'GET' });
+            if (!res.ok) throw new Error('Central store responded with ' + res.status);
+            const data = await res.json();
+            if (data.status !== 'ok') throw new Error('Central store error: ' + (data.error || JSON.stringify(data)));
+            return data.messages || [];
+        }
+
+        // Admin panel UI (modal)
+        function openAdminPanel(messages) {
+            // Remove existing panel if present
+            const existing = document.getElementById('admin-panel');
+            if (existing) existing.remove();
+
+            const panel = document.createElement('div');
+            panel.id = 'admin-panel';
+            panel.style.position = 'fixed';
+            panel.style.inset = '0';
+            panel.style.background = 'rgba(0,0,0,0.6)';
+            panel.style.display = 'flex';
+            panel.style.alignItems = 'center';
+            panel.style.justifyContent = 'center';
+            panel.style.zIndex = '9999';
+
+            const card = document.createElement('div');
+            card.style.width = '90%';
+            card.style.maxWidth = '900px';
+            card.style.maxHeight = '80%';
+            card.style.overflow = 'auto';
+            card.style.background = '#fff';
+            card.style.borderRadius = '12px';
+            card.style.padding = '20px';
+            card.style.boxShadow = '0 10px 30px rgba(0,0,0,0.2)';
+
+            const title = document.createElement('h3');
+            title.textContent = `Admin — Messages (${messages.length})`;
+            title.style.margin = '0 0 12px 0';
+            title.style.fontSize = '18px';
+            card.appendChild(title);
+
+            const table = document.createElement('table');
+            table.style.width = '100%';
+            table.style.borderCollapse = 'collapse';
+
+            const thead = document.createElement('thead');
+            thead.innerHTML = `<tr style="background:#f3f4f6"><th style="padding:8px;border:1px solid #e5e7eb;text-align:left">Time</th><th style="padding:8px;border:1px solid #e5e7eb;text-align:left">Name</th><th style="padding:8px;border:1px solid #e5e7eb;text-align:left">Email</th><th style="padding:8px;border:1px solid #e5e7eb;text-align:left">Message</th></tr>`;
+            table.appendChild(thead);
+
+            const tbody = document.createElement('tbody');
+            messages.forEach(m => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td style="padding:8px;border:1px solid #e5e7eb;vertical-align:top">${escapeHtml(m.timestamp || '')}</td>`+
+                               `<td style="padding:8px;border:1px solid #e5e7eb;vertical-align:top">${escapeHtml(m.name || '')}</td>`+
+                               `<td style="padding:8px;border:1px solid #e5e7eb;vertical-align:top">${escapeHtml(m.email || '')}</td>`+
+                               `<td style="padding:8px;border:1px solid #e5e7eb;vertical-align:top">${escapeHtml(m.message || '')}</td>`;
+                tbody.appendChild(tr);
+            });
+            table.appendChild(tbody);
+            card.appendChild(table);
+
+            const closeRow = document.createElement('div');
+            closeRow.style.display = 'flex';
+            closeRow.style.justifyContent = 'flex-end';
+            closeRow.style.marginTop = '12px';
+            const closeBtn = document.createElement('button');
+            closeBtn.textContent = 'Close';
+            closeBtn.style.padding = '8px 12px';
+            closeBtn.style.border = 'none';
+            closeBtn.style.borderRadius = '6px';
+            closeBtn.style.background = '#ef4444';
+            closeBtn.style.color = '#fff';
+            closeBtn.onclick = closeAdminPanel;
+            closeRow.appendChild(closeBtn);
+            card.appendChild(closeRow);
+
+            panel.appendChild(card);
+            document.body.appendChild(panel);
+        }
+
+        function closeAdminPanel() {
+            const el = document.getElementById('admin-panel');
+            if (el) el.remove();
+        }
+
+        function escapeHtml(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
         // Render on load
         document.addEventListener('DOMContentLoaded', () => {
             renderPortfolio();
             console.log('🎯 Portfolio loaded!');
             console.log('💡 Tip: Messages are saved in browser local storage.');
             console.log('📬 To view all messages, type: showAllMessages()');
+            // After initial render, update admin-specific button visibility if needed
+            try {
+                const viewBtn = document.getElementById('view-messages-btn');
+                const logoutBtn = document.getElementById('admin-logout-btn');
+                const loginBtn = document.getElementById('admin-login-btn');
+                if (isAdmin()) {
+                    if (viewBtn) viewBtn.style.display = '';
+                    if (logoutBtn) logoutBtn.style.display = '';
+                    if (loginBtn) loginBtn.style.display = 'none';
+                } else {
+                    if (viewBtn) viewBtn.style.display = 'none';
+                    if (logoutBtn) logoutBtn.style.display = 'none';
+                    if (loginBtn) loginBtn.style.display = '';
+                }
+            } catch (e) {
+                // ignore if DOM elements not present yet
+            }
         });
     </script>
 </body>
